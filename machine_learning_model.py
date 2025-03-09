@@ -197,8 +197,8 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
     # Stitch the tiles back together
     stitched_tiles = stitch_tiles_f(displacement_tiles, (image.shape[0], image.shape[1]))
 
-    stitched_image = (stitched_tiles - stitched_tiles.min()) / (stitched_tiles.max() - stitched_tiles.min() + 1e-12)
-    # stitched_image = (stitched_tiles + 2) / (4)
+    # stitched_image = (stitched_tiles - stitched_tiles.min()) / (stitched_tiles.max() - stitched_tiles.min() + 1e-12)
+    stitched_image = (stitched_tiles + 2) / (4)
     stitched_image = np.clip(stitched_image * 255, 0, 255).astype(np.uint8)
 
     os.makedirs(os.path.dirname(save_image_path), exist_ok=True)

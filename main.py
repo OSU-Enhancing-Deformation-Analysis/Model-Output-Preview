@@ -1,9 +1,11 @@
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.widgets as widgets
+from matplotlib.patches import Rectangle
 import numpy as np
 import argparse
 import os
+import time
 import glob
 import imageio
 import cv2
@@ -14,7 +16,7 @@ from machine_learning_model import process_image
 from strain_calculations import calculate_strain
 
 # Define available models
-AVAILABLE_MODELS = ["m4-combo", "m4-deeper", "m5-warp", "m5-warptest"]
+AVAILABLE_MODELS = ["m4-combo", "m4-deeper", "m5-warptest"]
 
 # Define a more colorful colormap for strain visualization
 strain_cmap = LinearSegmentedColormap.from_list("strain_cmap", ["blue", "cyan", "green", "yellow", "red"])
@@ -44,7 +46,7 @@ class ImageGrid:
         self.cumulative_strain_data = None  # Store cumulative strain data
         self.subset_size = 5  # Store subset size
         # Create figure and grid
-        self.fig = plt.figure(figsize=(18, 10))  # Increased figure width for new column
+        self.fig = plt.figure(figsize=(14, 8))  # Increased figure width for new column
         self.gs = gridspec.GridSpec(4, 6, figure=self.fig, height_ratios=[1, 1, 1, 0.3])  # 4x6 Grid
 
         # Top row: Force Graph
@@ -91,10 +93,14 @@ class ImageGrid:
         # Export Buttons Grid - moved to the last column
         self.ax_export_grid = self.fig.add_subplot(self.gs[2, 5])
         self.ax_export_grid.axis("off")
-        export_gs = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=self.gs[2, 5])  # Last column
-        self.ax_export_motion = self.fig.add_subplot(export_gs[0, 0])
-        self.ax_export_strain = self.fig.add_subplot(export_gs[1, 0])
-        self.ax_export_frames = self.fig.add_subplot(export_gs[2, 0])
+        export_gs = gridspec.GridSpecFromSubplotSpec(7, 1, subplot_spec=self.gs[2, 5])  # Last column
+        self.ax_export_frames = self.fig.add_subplot(export_gs[0, 0])
+        self.ax_export_motion = self.fig.add_subplot(export_gs[1, 0])
+        self.ax_export_cumulative_motion = self.fig.add_subplot(export_gs[2, 0])
+        self.ax_export_last5_motion = self.fig.add_subplot(export_gs[3, 0])
+        self.ax_export_strain = self.fig.add_subplot(export_gs[4, 0])
+        self.ax_export_cumulative_strain = self.fig.add_subplot(export_gs[5, 0])
+        self.ax_export_last5_strain = self.fig.add_subplot(export_gs[6, 0])
 
         # Bottom controls: Buttons & slider
         self.ax_slider_subset_size = self.fig.add_subplot(self.gs[3, 0:2])  # Slider for subs
@@ -108,11 +114,15 @@ class ImageGrid:
         self.btn_playpause = widgets.Button(self.ax_playpause, "Play/Pause")
         self.btn_right = widgets.Button(self.ax_right, "→")
         self.btn_process = widgets.Button(self.ax_process, "Run ML Model")
+        self.btn_export_frames = widgets.Button(self.ax_export_frames, "Export Frames GIF")
         self.btn_export_motion = widgets.Button(self.ax_export_motion, "Motion GIF")
+        self.btn_export_cumulative_motion = widgets.Button(self.ax_export_cumulative_motion, "Cumulative Motion GIF")
+        self.btn_export_last5_motion = widgets.Button(self.ax_export_last5_motion, "Last 5 Motion GIF")
         self.btn_export_strain = widgets.Button(self.ax_export_strain, "Strain GIF")
-        self.btn_export_frames = widgets.Button(self.ax_export_frames, "Export Frames")
+        self.btn_export_cumulative_strain = widgets.Button(self.ax_export_cumulative_strain, "Cumulative Strain GIF")
+        self.btn_export_last5_strain = widgets.Button(self.ax_export_last5_strain, "Last 5 Strain GIF")
         self.slider_subset_size = widgets.Slider(
-            ax=self.ax_slider_subset_size, label="Subset Size", valmin=3, valmax=15, valinit=self.subset_size, valstep=1  # Minimum subset size  # Maximum subset size - adjust as needed
+            ax=self.ax_slider_subset_size, label="Subset Size", valmin=2, valmax=15, valinit=self.subset_size, valstep=1  # Minimum subset size  # Maximum subset size - adjust as needed
         )
         self.slider_subset_size.on_changed(self.update_subset_size)  # C
 
@@ -121,9 +131,13 @@ class ImageGrid:
         self.btn_playpause.on_clicked(self.toggle_play)
         self.btn_process.on_clicked(self.run_model_on_all_images)
         self.btn_right.on_clicked(self.next_frame)
-        self.btn_export_motion.on_clicked(self.export_motion_gif)
-        self.btn_export_strain.on_clicked(self.export_strain_gif)
         self.btn_export_frames.on_clicked(self.export_frames_gif)
+        self.btn_export_motion.on_clicked(self.export_motion_gif)
+        self.btn_export_cumulative_motion.on_clicked(self.export_cumulative_motion_gif)
+        self.btn_export_last5_motion.on_clicked(self.export_last5_motion_gif)
+        self.btn_export_strain.on_clicked(self.export_strain_gif)
+        self.btn_export_cumulative_strain.on_clicked(self.export_cumulative_strain_gif)
+        self.btn_export_last5_strain.on_clicked(self.export_last5_strain_gif)
 
         # Hide empty axes
         # self.ax_empty_control.axis("off")
@@ -146,6 +160,7 @@ class ImageGrid:
     def update_subset_size(self, val):
         """Updates the subset size and re-runs strain analysis."""
         self.subset_size = int(self.slider_subset_size.val)  # Get integer value from slider
+        plt.pause(0.01)
         print(f"Subset size changed to: {self.subset_size}")
         if self.processed_motion_images is not None:  # Only re-run if processed data exists
             self.recalculate_strain_with_new_subset()
@@ -155,6 +170,15 @@ class ImageGrid:
         if self.processed_motion_images is None or self.processed_motion_data_paths is None:
             print("No processed data available to recalculate strain. Run ML model first.")
             return
+
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Recalculating Strain...")
 
         self.strain_data = []  # Clear old strain data
         self.cumulative_strain_data = []  # Clear cumulative strain data
@@ -172,7 +196,10 @@ class ImageGrid:
         self.strain_data = []
         self.cumulative_strain_data = []
 
-        for future in futures:
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
+        for i, future in enumerate(futures):
             # This will wait for each future to complete
             strain_result = future.result()
             self.strain_data.append(strain_result)
@@ -188,8 +215,29 @@ class ImageGrid:
                     cumulative_strain += current_strain
                 self.cumulative_strain_data.append(cumulative_strain.copy())
 
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (i + 1) / len(futures)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+
+        progress_ax.set_title("Collecting Futures...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
         print("Strain recalculation complete.")
         self.update_images()  #
+
+        progress_ax.remove()
+        progress_text.remove()
+        progress_bar.remove()
 
     def update_images(self):
         """Updates the image displays based on the current frame index."""
@@ -408,6 +456,19 @@ class ImageGrid:
         self.btn_process.label.set_text("Loading...")
         self.btn_process.set_active(False)
 
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Processing Images...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
         self.processed_motion_images = []
         self.processed_motion_data_paths = []
         self.strain_data = []
@@ -420,7 +481,11 @@ class ImageGrid:
 
         strain_futures = []
 
-        for i in range(len(self.image_files) - 1):  # Stop one before the end
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+        total_images = len(self.image_files) - 1
+
+        for i in range(total_images):  # Stop one before the end
             img_path = self.image_files[i]
             next_image_path = self.image_files[i + 1]
 
@@ -447,6 +512,23 @@ class ImageGrid:
             strain_future = calculate_strain(disp_data_path, self.selected_model, self.subset_size)
             strain_futures.append(strain_future)
 
+            current_time = time.time()
+            if current_time - last_update_time > update_interval or i == total_images - 1:
+                progress = (i + 1) / total_images
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+
+        progress_ax.set_title("Collecting Futures...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
         # Process results as they complete
         for future in strain_futures:
             strain_result = future.result()
@@ -465,10 +547,13 @@ class ImageGrid:
 
         print(f"Processed {len(self.processed_motion_images)} images using model: {self.selected_model}")
 
-        # Update the display with the processed and strain images
-        self.update_images()
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
         self.btn_process.label.set_text("Run ML Model")
         self.btn_process.set_active(True)  # Re-enable button
+
+        self.update_images()
 
     def create_displacement_image(self, disp_data):
         """Creates a red-green visualization from displacement data."""
@@ -498,6 +583,22 @@ class ImageGrid:
         self.btn_export_frames.label.set_text("Exporting...")
         self.btn_export_frames.set_active(False)
 
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Frames GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
         output_filename = "frames.gif"  # Changed filename to frames.gif
         print(f"Exporting frames GIF to {output_filename}...")
         motion_frames = []
@@ -507,11 +608,32 @@ class ImageGrid:
             combined_img = np.concatenate((img1, img2), axis=1)  # Combine side-by-side
             motion_frames.append(cv2.cvtColor(combined_img, cv2.COLOR_BGR2RGB))  # Convert to RGB for imageio
 
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (i + 1) / len(self.image_files)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
         imageio.mimsave(output_filename, motion_frames, fps=10)  # Adjust fps as needed
         print(f"Frames GIF exported to {output_filename}")
 
-        self.btn_export_frames.label.set_text("Export Frames GIF")
+        self.btn_export_frames.label.set_text("Frames GIF")
         self.btn_export_frames.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
 
     def export_motion_gif(self, event=None):
         """Exports a GIF of the processed motion (displacement) data."""
@@ -523,18 +645,178 @@ class ImageGrid:
         self.btn_export_motion.label.set_text("Exporting...")
         self.btn_export_motion.set_active(False)
 
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Motion GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
         output_filename = "motion.gif"
         print(f"Exporting motion GIF to {output_filename}...")
         motion_frames = []
-        for disp_data in self.processed_motion_images:
+        for i, disp_data in enumerate(self.processed_motion_images):
             disp_img_rgb = self.create_displacement_image(disp_data)  # Get RGB displacement image
             motion_frames.append(np.uint8(disp_img_rgb * 255))  # Scale to 0-255 and convert to uint8
+
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (i + 1) / len(self.processed_motion_images)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
 
         imageio.mimsave(output_filename, motion_frames, fps=10)  # Adjust fps as needed
         print(f"Motion GIF exported to {output_filename}")
 
-        self.btn_export_motion.label.set_text("Export Motion GIF")
+        self.btn_export_motion.label.set_text("Motion GIF")
         self.btn_export_motion.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
+
+    def export_cumulative_motion_gif(self, event=None):
+        """Exports a GIF of the cumulative motion data."""
+        if not self.motion_sum_data:
+            print("No cumulative motion data available to export. Run ML model first.")
+            self.btn_export_cumulative_motion.label.set_text("No Cumulative Motion Data (Click Run ML Model)")
+            return
+
+        self.btn_export_cumulative_motion.label.set_text("Exporting...")
+        self.btn_export_cumulative_motion.set_active(False)
+
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Cumulative Motion GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
+        output_filename = "cumulative_motion.gif"
+        print(f"Exporting cumulative motion GIF to {output_filename}...")
+        motion_frames = []
+        for i, disp_data in enumerate(self.motion_sum_data):
+            disp_img_rgb = self.create_displacement_image(disp_data)  # Get RGB displacement image
+            disp_img_rgb = (disp_img_rgb - disp_img_rgb.min()) / (disp_img_rgb.max() - disp_img_rgb.min() + 1e-6)  # Normalize for display
+            motion_frames.append(np.uint8(disp_img_rgb * 255))  # Scale to 0-255 and convert to uint8
+
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (i + 1) / len(self.motion_sum_data)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        imageio.mimsave(output_filename, motion_frames, fps=10)  # Adjust fps as needed
+        print(f"Cumulative motion GIF exported to {output_filename}")
+
+        self.btn_export_cumulative_motion.label.set_text("Cumulative Motion GIF")
+        self.btn_export_cumulative_motion.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
+
+    def export_last5_motion_gif(self, event=None):
+        """Exports a GIF of the last 5 frames of motion data."""
+        if not self.processed_motion_images or len(self.processed_motion_images) < 5:
+            print("No motion data available to export. Run ML model first.")
+            self.btn_export_last5_motion.label.set_text("No Motion Data (Click Run ML Model)")
+            return
+
+        self.btn_export_last5_motion.label.set_text("Exporting...")
+        self.btn_export_last5_motion.set_active(False)
+
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Last 5 Motion GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
+        output_filename = "last5_motion.gif"
+        print(f"Exporting last 5 motion GIF to {output_filename}...")
+        motion_frames = []
+        for i in range(0, len(self.processed_motion_images) - 4):
+            last_5_motion = np.sum(self.processed_motion_images[i : i + 5], axis=0)  # Sum last 5 or fewer frames
+            motion_sum_last_5_img = self.create_displacement_image(last_5_motion)
+            motion_sum_last_5_img = (motion_sum_last_5_img - motion_sum_last_5_img.min()) / (motion_sum_last_5_img.max() - motion_sum_last_5_img.min() + 1e-6)  # Normalize
+            motion_frames.append(np.uint8(motion_sum_last_5_img * 255))  # Scale to 0-255 and convert to uint8
+
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (i + 1) / len(self.processed_motion_images)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        imageio.mimsave(output_filename, motion_frames, fps=10)  # Adjust fps as needed
+        print(f"Last 5 motion GIF exported to {output_filename}")
+
+        self.btn_export_last5_motion.label.set_text("Last 5 Motion GIF")
+        self.btn_export_last5_motion.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
 
     def export_strain_gif(self, event=None):
         """Exports a GIF of combined strain visualizations."""
@@ -549,41 +831,158 @@ class ImageGrid:
         output_filename = "strain.gif"
         print(f"Exporting strain GIF to {output_filename}...")
 
-        strain_frames = []
         np_strain_data = np.array(self.strain_data)  # Convert list of tuples to a NumPy array
+        norm_strain_data = (np_strain_data - np_strain_data.min()) / (np_strain_data.max() - np_strain_data.min() + 1e-6)
+        image_data = norm_strain_data * 255
+        image_data = image_data.astype(np.uint8)
+        image_data = image_data.transpose(0, 2, 3, 1)  # Transpose to (frames, height, width, channels)
 
-        # Extract strain components
-        strain_xx_all = np_strain_data[:, 0]  # (frames, H, W)
-        strain_yy_all = np_strain_data[:, 1]
-        strain_xy_all = np_strain_data[:, 2]
+        # Save GIF with a reasonable FPS
+        imageio.mimsave(output_filename, image_data, fps=10)  # Adjust fps as needed
+        print(f"Strain GIF exported to {output_filename}")
 
-        # Compute global min/max across all frames and components
-        global_min = np.min([strain_xx_all.min(), strain_yy_all.min(), strain_xy_all.min()])
-        global_max = np.max([strain_xx_all.max(), strain_yy_all.max(), strain_xy_all.max()])
+        self.btn_export_strain.label.set_text("Strain GIF")
+        self.btn_export_strain.set_active(True)
+
+    def export_cumulative_strain_gif(self, event=None):
+        """Exports a GIF of the cumulative strain data."""
+        if not self.strain_data:
+            print("No cumulative strain data available to export. Run ML model first.")
+            self.btn_export_cumulative_strain.label.set_text("No Cumulative Strain Data (Click Run ML Model)")
+            return
+
+        self.btn_export_cumulative_strain.label.set_text("Exporting...")
+        self.btn_export_cumulative_strain.set_active(False)
+
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Cumulative Strain GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
+        output_filename = "cumulative_strain.gif"
+        print(f"Exporting cumulative strain GIF to {output_filename}...")
+
+        strain_frames = []
+
+        np_strain_data = np.array(self.strain_data)  # Convert list of tuples to a NumPy array
 
         # Loop through frames
         for frame_idx in range(len(self.strain_data)):
-            strain_xx = strain_xx_all[frame_idx]
-            strain_yy = strain_yy_all[frame_idx]
-            strain_xy = strain_xy_all[frame_idx]
+            sum_strain_data = np.sum(np_strain_data[0 : frame_idx + 1], axis=0)
+            sum_strain_data = (sum_strain_data - sum_strain_data.min()) / (sum_strain_data.max() - sum_strain_data.min() + 1e-6)
+            sum_strain_data = sum_strain_data * 255
+            sum_strain_data = sum_strain_data.astype(np.uint8)
+            sum_strain_data = sum_strain_data.transpose(1, 2, 0)  # Transpose to (height, width, channels)
+            strain_frames.append(sum_strain_data)
 
-            # Normalize strain components to 0-1 using global min/max
-            norm_strain_xx = (strain_xx - global_min) / (global_max - global_min + 1e-6)
-            norm_strain_yy = (strain_yy - global_min) / (global_max - global_min + 1e-6)
-            norm_strain_xy = (strain_xy - global_min) / (global_max - global_min + 1e-6)
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (frame_idx + 1) / len(self.strain_data)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
 
-            # Stack strain components as RGB channels
-            combined_strain_rgb = np.stack((norm_strain_xx, norm_strain_yy, norm_strain_xy), axis=-1)  # Shape: (H, W, 3)
-
-            # Convert to uint8 (0-255 range)
-            strain_frames.append(np.uint8(combined_strain_rgb * 255))
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
 
         # Save GIF with a reasonable FPS
         imageio.mimsave(output_filename, strain_frames, fps=10)  # Adjust fps as needed
-        print(f"Strain GIF exported to {output_filename}")
+        print(f"Cumulative strain GIF exported to {output_filename}")
 
-        self.btn_export_strain.label.set_text("Export Strain GIF")
-        self.btn_export_strain.set_active(True)
+        self.btn_export_cumulative_strain.label.set_text("Cumulative Strain GIF")
+        self.btn_export_cumulative_strain.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
+
+    def export_last5_strain_gif(self, event=None):
+        """Exports a GIF of the last 5 frames of strain data."""
+        if not self.strain_data or len(self.strain_data) < 5:
+            print("No strain data available to export. Run ML model first.")
+            self.btn_export_last5_strain.label.set_text("No Strain Data (Click Run ML Model)")
+            return
+
+        self.btn_export_last5_strain.label.set_text("Exporting...")
+        self.btn_export_last5_strain.set_active(False)
+
+        progress_ax = self.fig.add_axes((0.3, 0.48, 0.4, 0.03))
+        progress_bar = Rectangle((0, 0), 0, 1, color="green")
+        progress_ax.add_patch(progress_bar)
+        progress_ax.set_axis_off()
+        progress_ax.set_xlim(0, 1)
+        progress_ax.set_ylim(0, 1)
+        progress_text = self.fig.text(0.5, 0.5, "0%", ha="center", va="center", fontsize=12)
+        progress_ax.set_title("Exporting Last 5 Strain GIF...")
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        last_update_time = time.time()
+        update_interval = 1.0  # Update UI at most every 0.5 seconds
+
+        output_filename = "last5_strain.gif"
+        print(f"Exporting last 5 strain GIF to {output_filename}...")
+
+        strain_frames = []
+
+        np_strain_data = np.array(self.strain_data)  # Convert list of tuples to a NumPy array
+
+        # Loop through frames
+        for frame_idx in range(len(self.strain_data) - 4):
+            sum_strain_data = np.sum(np_strain_data[frame_idx : frame_idx + 5], axis=0)
+            sum_strain_data = (sum_strain_data - sum_strain_data.min()) / (sum_strain_data.max() - sum_strain_data.min() + 1e-6)
+            sum_strain_data = sum_strain_data * 255
+            sum_strain_data = sum_strain_data.astype(np.uint8)
+            sum_strain_data = sum_strain_data.transpose(1, 2, 0)  # Transpose to (height, width, channels)
+            strain_frames.append(sum_strain_data)
+
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                progress = (frame_idx + 1) / len(self.strain_data)
+                progress_bar.set_width(progress)
+                progress_text.set_text(f"{int(progress*100)}%")
+                self.fig.canvas.draw_idle()
+                plt.pause(0.01)
+                last_update_time = current_time
+
+        progress_bar.set_width(1)
+        progress_text.set_text("~100%")
+        progress_ax.set_title("Saving File...")
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.01)
+
+        # Save GIF with a reasonable FPS
+        imageio.mimsave(output_filename, strain_frames, fps=10)  # Adjust fps as needed
+        print(f"Last 5 strain GIF exported to {output_filename}")
+
+        self.btn_export_last5_strain.label.set_text("Last 5 Strain GIF")
+        self.btn_export_last5_strain.set_active(True)
+
+        progress_bar.remove()
+        progress_text.remove()
+        progress_ax.remove()
+        plt.pause(0.01)
 
 
 # Example usage:
