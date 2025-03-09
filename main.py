@@ -5,6 +5,8 @@ from matplotlib.patches import Rectangle
 import numpy as np
 import argparse
 import os
+import platform
+import dload
 import time
 import glob
 import imageio
@@ -14,6 +16,7 @@ from matplotlib.colors import LinearSegmentedColormap
 
 from machine_learning_model import process_image
 from strain_calculations import calculate_strain
+
 
 # Define available models
 AVAILABLE_MODELS = ["m4-combo", "m4-deeper", "m5-warptest"]
@@ -30,10 +33,11 @@ def load_images(folder):
 
 
 class ImageGrid:
-    def __init__(self, force_data_path, image_folder, cache_folder):
+    def __init__(self, force_data_path, image_folder, cache_folder, strain_calc_path):
         self.force_data_path = force_data_path
         self.image_folder = image_folder
         self.cache_folder = cache_folder
+        self.strain_calc_path = strain_calc_path
         self.image_files = load_images(image_folder)
         self.num_images = len(self.image_files)
         self.frame_idx = 0
@@ -188,7 +192,7 @@ class ImageGrid:
         # First, submit all tasks to the thread pool
         futures = []
         for disp_data_path in self.processed_motion_data_paths:
-            future = calculate_strain(disp_data_path, self.selected_model, self.subset_size, force_rerun=True)
+            future = calculate_strain(self.strain_calc_path, disp_data_path, self.selected_model, self.subset_size, force_rerun=True)
             futures.append(future)
 
         # Process results as they complete
@@ -509,7 +513,7 @@ class ImageGrid:
             self.motion_sum_data.append(cumulative_motion.copy())  # Store cumulative motion for each frame
 
             # Compute strain from displacement data
-            strain_future = calculate_strain(disp_data_path, self.selected_model, self.subset_size)
+            strain_future = calculate_strain(self.strain_calc_path, disp_data_path, self.selected_model, self.subset_size)
             strain_futures.append(strain_future)
 
             current_time = time.time()
@@ -990,11 +994,39 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--force_data_path", type=str, default="data/force_data.csv")
     parser.add_argument("--image_folder", type=str, default="data/images")
+    parser.add_argument("--cache_folder", type=str, default="cached_processed_images")
+    parser.add_argument("--strain_calc_path", type=str, default="strain_calc")
     args = parser.parse_args()
 
     force_data_path = args.force_data_path
     image_folder = args.image_folder
+    cache_folder = args.cache_folder
+    strain_calc_path = args.strain_calc_path
 
-    cache_folder = "cached_processed_images"
-    img_grid = ImageGrid(force_data_path, image_folder, cache_folder)  # Pass initial_model to ImageGrid
+    # Check for strain calculation executable
+    if strain_calc_path != "strain_calc" and not os.path.exists(strain_calc_path):
+        print("Error: strain_calc.runme executable not found. Please specify a correct path to the executable or leave it as the default.")
+        exit(1)
+
+    if not os.path.exists(strain_calc_path):
+        print("Error: strain_calc.runme executable not found. Downloading from GitHub...")
+        if platform.system() == "Windows":
+            donwload_url = "https://github.com/AidanSchmitigal/displaceToStrain/releases/download/v0.4-beta/build-artifacts-windows-latest-Release-cl.zip"
+            strain_calc_path = "strain_calc.exe"
+        elif platform.system() == "Linux":
+            donwload_url = "https://github.com/AidanSchmitigal/displaceToStrain/releases/download/v0.4-beta/build-artifacts-ubuntu-latest-Release-clang.zip"
+        elif platform.system() == "Darwin":
+            donwload_url = "https://github.com/AidanSchmitigal/displaceToStrain/releases/download/v0.4-beta/build-artifacts-macos-latest-Release-clang.zip"
+        else:
+            print("Error: unsupported platform. Please manually download the executable from https://github.com/AidanSchmitigal/displaceToStrain/releases")
+            exit(1)
+
+        dload.save_unzip(donwload_url, os.path.dirname("./"), True)
+
+        if platform.system() == "Linux" or platform.system() == "Darwin":
+            os.chmod(strain_calc_path, 0o755)
+
+        print("Download complete.")
+
+    img_grid = ImageGrid(force_data_path, image_folder, cache_folder, strain_calc_path)  # Pass initial_model to ImageGrid
     plt.show()
