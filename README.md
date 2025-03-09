@@ -39,6 +39,8 @@ project_directory/
 
 ### 1. Install Dependencies
 
+Firstly, download this repository from GitHub and unzip it.
+
 Install PyTorch from [PyTorch.org](https://pytorch.org/) if you want to use CUDA acceleration.
 If you are using a CPU-only machine, you can install like this:
 
