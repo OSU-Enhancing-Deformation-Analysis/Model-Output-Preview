@@ -1,5 +1,7 @@
 # Image Processing and Strain Analysis Project
 
+![Preivew of the program](readme.png)
+
 ## Overview
 
 This project provides a graphical interface for visualizing force data, image sequences, machine learning-processed images, and strain analysis. The system loads a sequence of images, processes them through a machine learning model, and visualizes the resulting displacement and strain data in a structured grid layout.
