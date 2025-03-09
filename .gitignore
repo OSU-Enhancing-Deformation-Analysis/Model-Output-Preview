@@ -1,0 +1,8 @@
+cached_processed_images/
+strain_calculator/
+.vscode/
+.env
+.ottotime
+__pycache__/
+.DS_Store
+strain_calc.runme
