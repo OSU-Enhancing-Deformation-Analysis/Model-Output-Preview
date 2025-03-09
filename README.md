@@ -21,14 +21,16 @@ To set up the project properly, organize your files and folders as follows:
 
 ```
 project_directory/
-│── raw_images/               # Folder containing raw input images
+│── images/                   # Folder containing raw input images
 │   ├── image_001.png
 │   ├── image_002.png
 │   ├── ...
 │
-│── cached_processed_images/         # Cached processed images (generated automatically)
-│                                    # It also contains the model outputs as images and npy files
-│                                    # and holds the strain data for each image
+│── force_data.csv            # CSV file containing force data (x, y, force)
+│
+│── cached_processed_images/  # Cached processed images (generated automatically)
+│                             # It also contains the model outputs as images and npy files
+│                             # and holds the strain data for each image
 │
 │── main.py                   # Main script for running the visualization
 ```
