@@ -992,10 +992,10 @@ class ImageGrid:
 # Example usage:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--force_data_path", type=str, default="data/force_data.csv")
-    parser.add_argument("--image_folder", type=str, default="data/images")
-    parser.add_argument("--cache_folder", type=str, default="cached_processed_images")
-    parser.add_argument("--strain_calc_path", type=str, default="strain_calc")
+    parser.add_argument("--force_data_path", type=str, default="./force_data.csv")
+    parser.add_argument("--image_folder", type=str, default="./images/")
+    parser.add_argument("--cache_folder", type=str, default="./cached_processed_images/")
+    parser.add_argument("--strain_calc_path", type=str, default="./strain_calc")
     args = parser.parse_args()
 
     force_data_path = args.force_data_path

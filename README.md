@@ -35,33 +35,24 @@ project_directory/
 
 ### 1. Install Dependencies
 
-Install PyTorch from [PyTorch.org](https://pytorch.org/).
+Install PyTorch from [PyTorch.org](https://pytorch.org/) if you want to use CUDA acceleration.
+If you are using a CPU-only machine, you can install like this:
+
+```sh
+pip install torch torchvision torchaudio
+```
+
 Ensure you have Python installed along with the necessary libraries:
 
 ```sh
-pip install matplotlib numpy pandas opencv-python imageio
+pip install matplotlib dload imageio opencv-python pandas scikit-image numpy
 ```
 
 ### 2. Organize Images
 
-Place your sequentially numbered images inside the `raw_images/` folder. Its best to have the images named consistently (e.g., `image_001.png`, `image_002.png`, etc.).
+Place your sequentially numbered images inside the `images/` folder. Its best to have the images named consistently (e.g., `image_001.png`, `image_002.png`, etc.).
 
-### 3. Set File Paths
-
-The default file paths for the image and the force data are these:
-
-```python
-file_path = "data/force_data.csv"
-image_folder = "data/raw_images"
-```
-
-If you want to use other ones, you can pass them as arguments to the main script:
-
-```python
-python main.py --file_path "data/force_data.csv" --image_folder "data/raw_images"
-```
-
-### 4. Run the Program
+### 3. Run the Program
 
 Execute the main script to launch the visualization interface:
 
@@ -69,11 +60,22 @@ Execute the main script to launch the visualization interface:
 python main.py
 ```
 
-## Usage
+### Additional Arguments
 
-- **Left/Right Arrows**: Navigate through frames.
-- **Play/Pause Button**: Automatically advance frames.
-- **Run Processing**: Ensure cached results are available before analysis.
+The default file paths for the image and the force data are these:
+
+```python
+file_path = "./force_data.csv" # Optional file to include a graph of force vs. point
+image_folder = "./images" # Folder containing images
+cache_folder = "./cached_processed_images" # Folder to store processed images if needed
+strain_calc_path = "./strain_calc" # Path to strain_calc.exe or strain_calc executable, it will be downloaded if not found
+```
+
+If you want to use other ones, you can optionally pass any of the following arguments to the main script:
+
+```python
+python main.py --file_path "force_data.csv" --image_folder "images" --cache_folder "cached_processed_images" --strain_calc_path "strain_calc"
+```
 
 ## Notes
 
@@ -82,7 +84,7 @@ python main.py
 
 ## Troubleshooting
 
-- If images do not load, check that the `raw_images/` folder exists and contains valid images.
+- If images do not load, check that the `images/` folder exists and contains valid images.
 - If the force plot does not display correctly, verify the CSV file format for force vs. point data. CSV files should have the following format:
 
 ```
