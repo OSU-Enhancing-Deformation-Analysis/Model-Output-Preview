@@ -1,10 +1,18 @@
-from data.model import run_single, run_batch
 from typing import Tuple, List
 import numpy as np
 from skimage.util import img_as_float
 import imageio
 import os
 from dataclasses import dataclass
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from models.m4_combo import ComboMotionVectorRegressionNetwork
+from models.m4_deeper import DeeperWiderMotionVectorRegressionNetwork
+from models.m5_warp import MotionVectorRegressionNetworkWithWarping
+from models.m5_warptest import MotionVectorRegressionNetworkWithWarping as MotionVectorRegressionNetworkWithWarpingTest
 
 TILE_SIZE = 256
 OVERLAP = 32
@@ -91,20 +99,72 @@ def stitch_tiles_f(tiles: List[Tile], original_shape: tuple) -> np.ndarray:
     return result
 
 
-def process_image(image_path: str, next_image_path: str, folder: str, model_name: str) -> Tuple[np.ndarray, str]:
+device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+print(f"Using {device} device")
+
+
+def run_single(model, x):
+    model.eval()
+
+    X = torch.from_numpy(x).float()
+    X = X.unsqueeze(0)
+    X = X.to(device)
+
+    pred = model(X)
+    pred = pred.detach().cpu().numpy()
+
+    return pred[0]
+
+
+def run_batch(model, x):
+    model.eval()
+
+    X = torch.from_numpy(x).float()
+    X = X.to(device)
+
+    pred = model(X)
+    pred = pred.detach().cpu().numpy()
+
+    return pred
+
+
+def process_image(image_path: str, next_image_path: str, folder: str, model_name: str) -> Tuple[np.ndarray, str] | None:
     """Processes an image using the trained model."""
     # Load the image by checking cache
-    save_image_path = f"{folder}/{image_path.split('/')[-1].split('.')[0]}_processed.png"
-    save_motion_path = f"{folder}/{image_path.split('/')[-1].split('.')[0]}_motion.npy"
+    save_image_path = f"{folder}/{model_name}/{image_path.split('/')[-1].split('.')[0]}_processed.png"
+    save_motion_path = f"{folder}/{model_name}/{image_path.split('/')[-1].split('.')[0]}_motion.npy"
     if os.path.exists(save_image_path) and os.path.exists(save_motion_path):
         return imageio.imread(save_image_path), save_motion_path
 
     image = imageio.imread(image_path)
     next_image = imageio.imread(next_image_path)
 
-    # Preprocess the images
-    image = img_as_float(image).astype(np.float32)
-    next_image = img_as_float(next_image).astype(np.float32)
+    # Load model
+
+    model = None
+    if model_name == "m4-combo":
+        model = ComboMotionVectorRegressionNetwork(input_images=2).to(device)
+        model.load_state_dict(torch.load("models/m4-combo.pt", weights_only=True, map_location=device))
+
+    elif model_name == "m4-deeper":
+        model = DeeperWiderMotionVectorRegressionNetwork(input_images=2).to(device)
+        model.load_state_dict(torch.load("models/m4-deeper.pt", weights_only=True, map_location=device))
+
+    elif model_name == "m5-warp":
+        model = MotionVectorRegressionNetworkWithWarping(input_images=2, max_displacement=20).to(device)
+        model.load_state_dict(torch.load("models/m5-warp.pt", weights_only=True, map_location=device))
+
+    elif model_name == "m5-warptest":
+        model = MotionVectorRegressionNetworkWithWarpingTest(input_images=2, max_displacement=20).to(device)
+        model.load_state_dict(torch.load("models/m5-warptest.pt", weights_only=True, map_location=device))
+
+        # Preprocess the images
+        image = img_as_float(image).astype(np.float32)
+        next_image = img_as_float(next_image).astype(np.float32)
+
+    else:
+        print(f"Unknown model: {model_name}")
+        return None
 
     # Split the images into tiles
     tiles = create_tiles(image)
@@ -121,7 +181,7 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
 
     for batch in batches:
         X = np.array([[tile1.data, tile2.data] for (tile1, tile2) in batch], dtype=np.float32)
-        batch_pred = run_batch(X)  # [2, H, W]
+        batch_pred = run_batch(model, X)  # [2, H, W]
 
         for i, (tile1, tile2) in enumerate(batch):
             pred = batch_pred[i]
@@ -130,12 +190,18 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
 
             displacement_tiles.append(Tile(data=pred, position=tile1.position, size=tile1.size, overlap=tile1.overlap))
 
+    # Clean up model
+
+    del model
+
     # Stitch the tiles back together
     stitched_tiles = stitch_tiles_f(displacement_tiles, (image.shape[0], image.shape[1]))
 
-    # stitched_image = (stitched_tiles - stitched_tiles.min()) / (stitched_tiles.max() - stitched_tiles.min() + 1e-12)
-    stitched_image = (stitched_tiles + 2) / (4)
+    stitched_image = (stitched_tiles - stitched_tiles.min()) / (stitched_tiles.max() - stitched_tiles.min() + 1e-12)
+    # stitched_image = (stitched_tiles + 2) / (4)
     stitched_image = np.clip(stitched_image * 255, 0, 255).astype(np.uint8)
+
+    os.makedirs(os.path.dirname(save_image_path), exist_ok=True)
 
     # Save the stitched image to file for caching
     imageio.imwrite(save_image_path, stitched_image)

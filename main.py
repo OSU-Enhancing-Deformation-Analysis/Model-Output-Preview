@@ -14,7 +14,7 @@ from machine_learning_model import process_image
 from strain_calculations import calculate_strain
 
 # Define available models
-AVAILABLE_MODELS = ["model_A", "model_B", "model_C"]
+AVAILABLE_MODELS = ["m4-combo", "m4-deeper", "m5-warp", "m5-warptest"]
 
 # Define a more colorful colormap for strain visualization
 strain_cmap = LinearSegmentedColormap.from_list("strain_cmap", ["blue", "cyan", "green", "yellow", "red"])
@@ -28,7 +28,7 @@ def load_images(folder):
 
 
 class ImageGrid:
-    def __init__(self, force_data_path, image_folder, cache_folder, initial_model="model_A"):
+    def __init__(self, force_data_path, image_folder, cache_folder):
         self.force_data_path = force_data_path
         self.image_folder = image_folder
         self.cache_folder = cache_folder
@@ -36,12 +36,13 @@ class ImageGrid:
         self.num_images = len(self.image_files)
         self.frame_idx = 0
         self.playing = False
-        self.processed_data = None
+        self.processed_motion_images = None
+        self.processed_motion_data_paths = None
         self.strain_data = None
-        self.selected_model = initial_model
+        self.selected_model = AVAILABLE_MODELS[0]
         self.motion_sum_data = None  # Store sum of motion data
         self.cumulative_strain_data = None  # Store cumulative strain data
-
+        self.subset_size = 5  # Store subset size
         # Create figure and grid
         self.fig = plt.figure(figsize=(18, 10))  # Increased figure width for new column
         self.gs = gridspec.GridSpec(4, 6, figure=self.fig, height_ratios=[1, 1, 1, 0.3])  # 4x6 Grid
@@ -96,19 +97,24 @@ class ImageGrid:
         self.ax_export_frames = self.fig.add_subplot(export_gs[2, 0])
 
         # Bottom controls: Buttons & slider
-        self.ax_left = self.fig.add_subplot(self.gs[3, 0])
-        self.ax_slider = self.fig.add_subplot(self.gs[3, 1])
-        self.ax_right = self.fig.add_subplot(self.gs[3, 2])
+        self.ax_slider_subset_size = self.fig.add_subplot(self.gs[3, 0:2])  # Slider for subs
+        self.ax_left = self.fig.add_subplot(self.gs[3, 2])
+        self.ax_playpause = self.fig.add_subplot(self.gs[3, 3])
+        self.ax_right = self.fig.add_subplot(self.gs[3, 4])
         self.ax_process = self.fig.add_subplot(self.gs[3, 5])
-        self.ax_empty_control = self.fig.add_subplot(self.gs[3, 4:])  # Empty for alignment
+        # self.ax_empty_control = self.fig.add_subplot(self.gs[3, 4:])  # Empty for alignment
 
         self.btn_left = widgets.Button(self.ax_left, "←")
-        self.btn_playpause = widgets.Button(self.ax_slider, "Play/Pause")
+        self.btn_playpause = widgets.Button(self.ax_playpause, "Play/Pause")
         self.btn_right = widgets.Button(self.ax_right, "→")
         self.btn_process = widgets.Button(self.ax_process, "Run ML Model")
         self.btn_export_motion = widgets.Button(self.ax_export_motion, "Motion GIF")
         self.btn_export_strain = widgets.Button(self.ax_export_strain, "Strain GIF")
         self.btn_export_frames = widgets.Button(self.ax_export_frames, "Export Frames")
+        self.slider_subset_size = widgets.Slider(
+            ax=self.ax_slider_subset_size, label="Subset Size", valmin=3, valmax=15, valinit=self.subset_size, valstep=1  # Minimum subset size  # Maximum subset size - adjust as needed
+        )
+        self.slider_subset_size.on_changed(self.update_subset_size)  # C
 
         # Connect button events
         self.btn_left.on_clicked(self.prev_frame)
@@ -120,7 +126,7 @@ class ImageGrid:
         self.btn_export_frames.on_clicked(self.export_frames_gif)
 
         # Hide empty axes
-        self.ax_empty_control.axis("off")
+        # self.ax_empty_control.axis("off")
 
         # Initial display
         self.update_images()
@@ -134,7 +140,56 @@ class ImageGrid:
     def set_model(self, model):
         """Sets the selected ML model based on radio button input."""
         self.selected_model = model
-        print(f"Selected model: {self.selected_model}")
+        print(f"Selected model changed to: {self.selected_model}. Running ML model...")
+        self.run_model_on_all_images()  # Call run_model when model is changed
+
+    def update_subset_size(self, val):
+        """Updates the subset size and re-runs strain analysis."""
+        self.subset_size = int(self.slider_subset_size.val)  # Get integer value from slider
+        print(f"Subset size changed to: {self.subset_size}")
+        if self.processed_motion_images is not None:  # Only re-run if processed data exists
+            self.recalculate_strain_with_new_subset()
+
+    def recalculate_strain_with_new_subset(self):
+        """Recalculates strain data with the new subset size and updates display."""
+        if self.processed_motion_images is None or self.processed_motion_data_paths is None:
+            print("No processed data available to recalculate strain. Run ML model first.")
+            return
+
+        self.strain_data = []  # Clear old strain data
+        self.cumulative_strain_data = []  # Clear cumulative strain data
+        cumulative_strain = None  # Reset cumulative strain
+
+        print("Recalculating strain with new subset size...")
+        # First, submit all tasks to the thread pool
+        futures = []
+        for disp_data_path in self.processed_motion_data_paths:
+            future = calculate_strain(disp_data_path, self.selected_model, self.subset_size, force_rerun=True)
+            futures.append(future)
+
+        # Process results as they complete
+        cumulative_strain = None
+        self.strain_data = []
+        self.cumulative_strain_data = []
+
+        for future in futures:
+            # This will wait for each future to complete
+            strain_result = future.result()
+            self.strain_data.append(strain_result)
+
+            # Accumulate strain
+            if strain_result is not None:
+                strain_xx, strain_yy, strain_xy = strain_result
+                current_strain = np.stack([strain_xx, strain_yy, strain_xy], axis=-1).astype(np.float32)
+
+                if cumulative_strain is None:
+                    cumulative_strain = current_strain.copy()
+                else:
+                    cumulative_strain += current_strain
+                self.cumulative_strain_data.append(cumulative_strain.copy())
+
+        print("Strain recalculation complete.")
+        self.update_images()  #
 
     def update_images(self):
         """Updates the image displays based on the current frame index."""
@@ -163,8 +218,8 @@ class ImageGrid:
             self.ax_img2.set_title(f"Frame {next_idx + 1}")
 
             # Display processed displacement data
-            if self.processed_data and self.frame_idx < len(self.processed_data):  # Check if processed data is available for current frame
-                disp_data = self.processed_data[self.frame_idx]
+            if self.processed_motion_images and self.frame_idx < len(self.processed_motion_images):  # Check if processed data is available for current frame
+                disp_data = self.processed_motion_images[self.frame_idx]
                 disp_img = self.create_displacement_image(disp_data)
                 self.ax_processed.imshow(disp_img)
                 self.ax_processed.set_title("Processed Frame")
@@ -259,9 +314,9 @@ class ImageGrid:
         self.ax_motion_sum_last5.set_yticks([])
         self.ax_motion_sum_last5.set_frame_on(False)  # Hide axis
 
-        if self.processed_data and self.frame_idx < len(self.processed_data):
+        if self.processed_motion_images and self.frame_idx < len(self.processed_motion_images):
             start_frame = max(0, self.frame_idx - 4)  # Start from 0 if frame_idx < 4
-            last_5_motion = np.sum(self.processed_data[start_frame : self.frame_idx + 1], axis=0)  # Sum last 5 or fewer frames
+            last_5_motion = np.sum(self.processed_motion_images[start_frame : self.frame_idx + 1], axis=0)  # Sum last 5 or fewer frames
             motion_sum_last_5_img = self.create_displacement_image(last_5_motion)
             motion_sum_last_5_img = (motion_sum_last_5_img - motion_sum_last_5_img.min()) / (motion_sum_last_5_img.max() - motion_sum_last_5_img.min() + 1e-6)  # Normalize
 
@@ -353,7 +408,8 @@ class ImageGrid:
         self.btn_process.label.set_text("Loading...")
         self.btn_process.set_active(False)
 
-        self.processed_data = []
+        self.processed_motion_images = []
+        self.processed_motion_data_paths = []
         self.strain_data = []
         self.motion_sum_data = []  # Initialize motion sum data
         self.cumulative_strain_data = []  # Initialize cumulative strain data
@@ -362,12 +418,22 @@ class ImageGrid:
         cumulative_motion = None  # Initialize cumulative motion to None, will be created on first frame
         cumulative_strain = None  # Initialize cumulative strain to None
 
+        strain_futures = []
+
         for i in range(len(self.image_files) - 1):  # Stop one before the end
             img_path = self.image_files[i]
             next_image_path = self.image_files[i + 1]
 
-            disp_image, disp_data_path = process_image(img_path, next_image_path, self.cache_folder, model_name=self.selected_model)  # Pass selected_model
-            self.processed_data.append(disp_image)
+            model_results = process_image(img_path, next_image_path, self.cache_folder, model_name=self.selected_model)  # Pass selected_model
+
+            if model_results is None:
+                self.btn_process.label.set_text("Model not found")
+                self.btn_process.set_active(False)
+                break
+
+            disp_image, disp_data_path = model_results
+            self.processed_motion_images.append(disp_image)
+            self.processed_motion_data_paths.append(disp_data_path)
             disp_image = disp_image.astype(np.float32)  # Ensure float32 for accumulation
 
             # Accumulate motion for motion sum
@@ -378,7 +444,12 @@ class ImageGrid:
             self.motion_sum_data.append(cumulative_motion.copy())  # Store cumulative motion for each frame
 
             # Compute strain from displacement data
-            strain_result = calculate_strain(disp_data_path)
+            strain_future = calculate_strain(disp_data_path, self.selected_model, self.subset_size)
+            strain_futures.append(strain_future)
+
+        # Process results as they complete
+        for future in strain_futures:
+            strain_result = future.result()
             self.strain_data.append(strain_result)
 
             # Accumulate strain
@@ -392,7 +463,7 @@ class ImageGrid:
                     cumulative_strain += current_strain
                 self.cumulative_strain_data.append(cumulative_strain.copy())  # Store cumulative strain
 
-        print(f"Processed {len(self.processed_data)} images using model: {self.selected_model}")
+        print(f"Processed {len(self.processed_motion_images)} images using model: {self.selected_model}")
 
         # Update the display with the processed and strain images
         self.update_images()
@@ -444,7 +515,7 @@ class ImageGrid:
 
     def export_motion_gif(self, event=None):
         """Exports a GIF of the processed motion (displacement) data."""
-        if not self.processed_data:
+        if not self.processed_motion_images:
             print("No processed motion data available to export. Run ML model first.")
             self.btn_export_motion.label.set_text("No Motion Data (Click Run ML Model)")
             return
@@ -455,7 +526,7 @@ class ImageGrid:
         output_filename = "motion.gif"
         print(f"Exporting motion GIF to {output_filename}...")
         motion_frames = []
-        for disp_data in self.processed_data:
+        for disp_data in self.processed_motion_images:
             disp_img_rgb = self.create_displacement_image(disp_data)  # Get RGB displacement image
             motion_frames.append(np.uint8(disp_img_rgb * 255))  # Scale to 0-255 and convert to uint8
 
@@ -519,14 +590,12 @@ class ImageGrid:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--force_data_path", type=str, default="data/force_data.csv")
-    parser.add_argument("--image_folder", type=str, default="data/raw_images")
-    parser.add_argument("--model", type=str, default="model_A", choices=AVAILABLE_MODELS, help="Select ML model for processing")  # CLI argument for model selection
+    parser.add_argument("--image_folder", type=str, default="data/images")
     args = parser.parse_args()
 
     force_data_path = args.force_data_path
     image_folder = args.image_folder
-    model_name = args.model  # Get model name from command line
 
     cache_folder = "cached_processed_images"
-    img_grid = ImageGrid(force_data_path, image_folder, cache_folder, initial_model=model_name)  # Pass initial_model to ImageGrid
+    img_grid = ImageGrid(force_data_path, image_folder, cache_folder)  # Pass initial_model to ImageGrid
     plt.show()
