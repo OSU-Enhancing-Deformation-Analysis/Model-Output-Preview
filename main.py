@@ -991,11 +991,13 @@ class ImageGrid:
 
 # Example usage:
 if __name__ == "__main__":
+    strain_calc_path = "./strain_calc.exe" if platform.system() == "Windows" else "./strain_calc"
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--force_data_path", type=str, default="./force_data.csv")
     parser.add_argument("--image_folder", type=str, default="./images/")
     parser.add_argument("--cache_folder", type=str, default="./cached_processed_images/")
-    parser.add_argument("--strain_calc_path", type=str, default="./strain_calc")
+    parser.add_argument("--strain_calc_path", type=str, default=strain_calc_path)
     args = parser.parse_args()
 
     force_data_path = args.force_data_path
@@ -1004,15 +1006,14 @@ if __name__ == "__main__":
     strain_calc_path = args.strain_calc_path
 
     # Check for strain calculation executable
-    if strain_calc_path != "strain_calc" and not os.path.exists(strain_calc_path):
+    if strain_calc_path != strain_calc_path and not os.path.exists(strain_calc_path):
         print("Error: strain_calc.runme executable not found. Please specify a correct path to the executable or leave it as the default.")
         exit(1)
 
     if not os.path.exists(strain_calc_path):
-        print("Error: strain_calc.runme executable not found. Downloading from GitHub...")
+        print(f"Error: {strain_calc_path} executable not found. Downloading from GitHub...")
         if platform.system() == "Windows":
             donwload_url = "https://github.com/AidanSchmitigal/displaceToStrain/releases/download/v0.4-beta/build-artifacts-windows-latest-Release-cl.zip"
-            strain_calc_path = "strain_calc.exe"
         elif platform.system() == "Linux":
             donwload_url = "https://github.com/AidanSchmitigal/displaceToStrain/releases/download/v0.4-beta/build-artifacts-ubuntu-latest-Release-clang.zip"
         elif platform.system() == "Darwin":

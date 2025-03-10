@@ -99,7 +99,10 @@ def stitch_tiles_f(tiles: List[Tile], original_shape: tuple) -> np.ndarray:
     return result
 
 
-device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+if hasattr(torch, "accelerator"):
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+else:
+    device = "cpu"
 print(f"Using {device} device")
 
 
@@ -208,6 +211,7 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
 
     # Remove the third channel
     stitched_tiles = stitched_tiles[:, :, :2]
+    # stitched_tiles.shape = (H, W, 2)
 
     np.save(save_motion_path, stitched_tiles.astype(np.float64))
 
