@@ -102,7 +102,7 @@ def stitch_tiles_f(tiles: List[Tile], original_shape: tuple) -> np.ndarray:
 if hasattr(torch, "accelerator"):
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 else:
-    device = "cpu"
+    device = "cuda"
 print(f"Using {device} device")
 
 
@@ -131,11 +131,18 @@ def run_batch(model, x):
     return pred
 
 
-def process_image(image_path: str, next_image_path: str, folder: str, model_name: str) -> Tuple[np.ndarray, str] | None:
+def process_image(image_path: str, next_image_path: str, folder: str, model_name: str, frame_gap: int = 1) -> Tuple[np.ndarray, str] | None:
     """Processes an image using the trained model."""
+
     # Load the image by checking cache
-    save_image_path = f"{folder}/{model_name}/{image_path.split('/')[-1].split('.')[0]}_processed.png"
-    save_motion_path = f"{folder}/{model_name}/{image_path.split('/')[-1].split('.')[0]}_motion.npy"
+    base      = os.path.basename(image_path).split('.')[0]
+    gap_tag   = f"_gap{frame_gap}"
+
+    model_root = os.path.join(folder, model_name, f"gap{frame_gap}")
+
+    save_image_path = os.path.join(model_root, f"{base}{gap_tag}_processed.png")
+    save_motion_path = os.path.join(model_root, f"{base}{gap_tag}_motion.npy")
+
     if os.path.exists(save_image_path) and os.path.exists(save_motion_path):
         return imageio.imread(save_image_path), save_motion_path
 

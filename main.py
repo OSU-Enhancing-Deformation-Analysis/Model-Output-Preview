@@ -114,6 +114,33 @@ class ImageGrid:
         self.ax_process = self.fig.add_subplot(self.gs[3, 5])
         # self.ax_empty_control = self.fig.add_subplot(self.gs[3, 4:])  # Empty for alignment
 
+        control_gs = gridspec.GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=self.gs[3, 0:2], height_ratios=[1, 1], hspace=0.35
+        )
+        self.ax_slider_subset_size = self.fig.add_subplot(control_gs[0, 0])
+        self.slider_subset_size = widgets.Slider(
+            ax=self.ax_slider_subset_size,
+            label="Subset Size",
+            valmin=2,
+            valmax=15,
+            valinit=self.subset_size,
+            valstep=1,
+        )
+        self.slider_subset_size.on_changed(self.update_subset_size)
+
+        # frame gap
+        self.frame_gap = 1                                              # <-- default
+        self.ax_slider_frame_gap = self.fig.add_subplot(control_gs[1, 0])
+        self.slider_frame_gap = widgets.Slider(
+            ax=self.ax_slider_frame_gap,
+            label="Frame Gap",
+            valmin=1,
+            valmax=max(1, self.num_images - 1),                         # safeguard
+            valinit=self.frame_gap,
+            valstep=1,
+        )
+        self.slider_frame_gap.on_changed(self.update_frame_gap)
+
         self.btn_left = widgets.Button(self.ax_left, "←")
         self.btn_playpause = widgets.Button(self.ax_playpause, "Play/Pause")
         self.btn_right = widgets.Button(self.ax_right, "→")
@@ -154,6 +181,20 @@ class ImageGrid:
         self.update_motion_sum_last_5()  # Initialize last 5 motion sum
         self.update_combined_strain()  # Initialize combined strain
         self.update_cumulative_strain()  # Initialize cumulative strain
+    
+    def update_frame_gap(self, val):
+        """Callback when the Frame-Gap slider is moved."""
+        self.frame_gap = int(self.slider_frame_gap.val)
+        print(f"Frame gap changed to: {self.frame_gap}")
+        # Invalidate any previously-cached motion / strain results
+        self.processed_motion_images = None
+        self.processed_motion_data_paths = None
+        self.motion_sum_data = None
+        self.strain_data = None
+        self.cumulative_strain_data = None
+        self.update_info_text()
+        self.update_images()
+
 
     def set_model(self, model):
         """Sets the selected ML model based on radio button input."""
@@ -263,7 +304,7 @@ class ImageGrid:
             self.ax_img1.imshow(img1, cmap="gray")
             self.ax_img1.set_title(f"Frame {self.frame_idx + 1}")
 
-            next_idx = (self.frame_idx + 1) % self.num_images
+            next_idx = (self.frame_idx + self.frame_gap) % self.num_images 
             img2 = cv2.imread(self.image_files[next_idx], cv2.IMREAD_GRAYSCALE)
             img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
             self.ax_img2.imshow(img2, cmap="gray")
@@ -319,7 +360,12 @@ class ImageGrid:
         self.ax_info.set_yticks([])
         self.ax_info.set_frame_on(False)
 
-        text = f"Loaded Data Info:\nImages: {self.num_images}\nCurrent Frames: {self.frame_idx + 1} & {(self.frame_idx + 2) % self.num_images}\nModel: {self.selected_model}"  # Added model info
+        #text = f"Loaded Data Info:\nImages: {self.num_images}\nCurrent Frames: {self.frame_idx + 1} & {(self.frame_idx + 2) % self.num_images}\nModel: {self.selected_model}"  # Added model info
+        text = (f"Loaded Data Info:\n"
+        f"Images: {self.num_images}\n"
+        f"Current Frames: {self.frame_idx + 1} "
+        f"& {(self.frame_idx + self.frame_gap) % self.num_images + 1}\n"
+        f"Model: {self.selected_model}")
         self.ax_info.text(0.1, 0.5, text, fontsize=10, fontweight="bold", va="center")
 
         plt.draw()
@@ -489,11 +535,13 @@ class ImageGrid:
         update_interval = 1.0  # Update UI at most every 0.5 seconds
         total_images = len(self.image_files) - 1
 
-        for i in range(total_images):  # Stop one before the end
-            img_path = self.image_files[i]
-            next_image_path = self.image_files[i + 1]
+        total_pairs = self.num_images - self.frame_gap
 
-            model_results = process_image(img_path, next_image_path, self.cache_folder, model_name=self.selected_model)  # Pass selected_model
+        for i in range(total_pairs):
+            img_path         = self.image_files[i]
+            next_image_path  = self.image_files[i + self.frame_gap]   
+
+            model_results = process_image(img_path, next_image_path, self.cache_folder, model_name=self.selected_model, frame_gap=self.frame_gap)  # Pass selected_model
 
             if model_results is None:
                 self.btn_process.label.set_text("Model not found")
