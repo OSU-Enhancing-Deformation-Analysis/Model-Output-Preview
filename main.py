@@ -607,6 +607,8 @@ class ImageGrid:
         self.update_images()
 
     def create_displacement_image(self, disp_data):
+        return disp_data
+
         """Creates a red-green visualization from displacement data."""
         # H W 3 -> 3 H W
         disp_data = np.transpose(disp_data, (2, 0, 1))

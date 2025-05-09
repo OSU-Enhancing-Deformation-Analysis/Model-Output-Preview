@@ -15,78 +15,159 @@ from models.m5_warp import MotionVectorRegressionNetworkWithWarping
 from models.m5_warptest import MotionVectorRegressionNetworkWithWarping as MotionVectorRegressionNetworkWithWarpingTest
 
 TILE_SIZE = 256
-OVERLAP = 64
 BATCH_SIZE = 32
 
+# Size of the overlap region of each tile used for stitching
+OVERLAP = 64
+
+# Size of the center region of each tile used for cropping
 CENTER_SIZE = 64
 CENTER_INSET = (TILE_SIZE - CENTER_SIZE) // 2
+
+# Weather to produce tiles with black regions outside the original image
+INCLUDE_OUTSIDE = False
 
 
 @dataclass
 class Tile:
-    data: np.ndarray
+    data: np.ndarray  # Image data for the tile in shape (TILE_SIZE, TILE_SIZE) for tiling, and (TILE_SIZE, TILE_SIZE, 2) for stitching
     position: Tuple[int, int]  # (y, x) position in original image
-    # size: int
-    # overlap: int
 
 
 def create_tiles(image: np.ndarray) -> List[Tile]:
-    """Split image into overlapping tiles."""
+    """Split image into overlapping tiles.
+
+    Args:
+        image (np.ndarray): The image to split into tiles. Must be shape (height, width)
+
+    Returns:
+        List[Tile]: A list of Tile objects, each containing the data and position of a tile in the image.
+
+    """
     height, width = image.shape
     tiles = []
 
-    for y in range(-CENTER_INSET, height - CENTER_INSET, CENTER_SIZE):
-        for x in range(-CENTER_INSET, width - CENTER_INSET, CENTER_SIZE):
+    if INCLUDE_OUTSIDE:
 
-            # Calculate tile boundaries
-            y_start = max(y, 0)
-            x_start = max(x, 0)
-            y_end = min(y + TILE_SIZE, height)
-            x_end = min(x + TILE_SIZE, width)
+        for y in range(-CENTER_INSET, height - CENTER_INSET, CENTER_SIZE):
+            for x in range(-CENTER_INSET, width - CENTER_INSET, CENTER_SIZE):
 
-            shift_x = x_start - x
-            shift_y = y_start - y
+                # Calculate tile boundaries
+                y_start = max(y, 0)
+                x_start = max(x, 0)
+                y_end = min(y + TILE_SIZE, height)
+                x_end = min(x + TILE_SIZE, width)
 
-            # Extract tile data
-            tile_data = image[y_start:y_end, x_start:x_end]
+                shift_x = x_start - x
+                shift_y = y_start - y
 
-            # Pad if necessary
-            if tile_data.shape != (TILE_SIZE, TILE_SIZE):
-                padded_data = np.zeros((TILE_SIZE, TILE_SIZE), dtype=tile_data.dtype)
-                padded_data[shift_y : shift_y + tile_data.shape[0], shift_x : shift_x + tile_data.shape[1]] = tile_data
-                tile_data = padded_data
+                # Extract tile data
+                tile_data = image[y_start:y_end, x_start:x_end]
 
-            tiles.append(Tile(data=tile_data.copy(), position=(y, x)))
+                # Pad if necessary
+                if tile_data.shape != (TILE_SIZE, TILE_SIZE):
+                    padded_data = np.zeros((TILE_SIZE, TILE_SIZE), dtype=tile_data.dtype)
+                    padded_data[shift_y : shift_y + tile_data.shape[0], shift_x : shift_x + tile_data.shape[1]] = tile_data
+                    tile_data = padded_data
+
+                tiles.append(Tile(data=tile_data.copy(), position=(y, x)))
+    else:
+        for y in range(0, height, CENTER_SIZE):
+            for x in range(0, width, CENTER_SIZE):
+
+                # Calculate tile boundaries
+                y_start = max(y, 0)
+                x_start = max(x, 0)
+                y_end = min(y + TILE_SIZE, height)
+                x_end = min(x + TILE_SIZE, width)
+
+                shift_x = x_start - x
+                shift_y = y_start - y
+
+                # Extract tile data
+                tile_data = image[y_start:y_end, x_start:x_end]
+
+                # Pad if necessary
+                if tile_data.shape != (TILE_SIZE, TILE_SIZE):
+                    padded_data = np.zeros((TILE_SIZE, TILE_SIZE), dtype=tile_data.dtype)
+                    padded_data[shift_y : shift_y + tile_data.shape[0], shift_x : shift_x + tile_data.shape[1]] = tile_data
+                    tile_data = padded_data
+
+                tiles.append(Tile(data=tile_data.copy(), position=(y, x)))
 
     return tiles
 
 
 def stitch_tiles_f(tiles: List[Tile], original_shape: tuple) -> np.ndarray:
-    """Stitch tiles back together with average blending in overlap regions for colored images."""
+    """Stitch tiles back together with average blending in overlap regions for colored images.
+
+    Args:
+        tiles (List[Tile]): A list of Tile objects, each containing the data and position of a tile in the image. The tiles are assumed to be in shape (TILE_SIZE, TILE_SIZE, 2).
+        original_shape (tuple): The shape of the original image in (height, width) format.
+
+    Returns:
+        np.ndarray: The stitched image in shape (height, width, 2).
+    """
     height, width = original_shape
-    result = np.zeros((height, width, 3), dtype=np.float32)
+    result = np.zeros((height, width, 2), dtype=np.float32)
 
     for tile in tiles:
         y, x = tile.position
 
-        crop_x_start = max(x + CENTER_INSET, 0)
-        crop_y_start = max(y + CENTER_INSET, 0)
-        crop_x_end = min(x + TILE_SIZE - CENTER_INSET, width)
-        crop_y_end = min(y + TILE_SIZE - CENTER_INSET, height)
+        if INCLUDE_OUTSIDE:
 
-        tile_x_start = CENTER_INSET
-        tile_x_end = min((TILE_SIZE - CENTER_INSET) + x, width) - x
-        tile_y_start = CENTER_INSET
-        tile_y_end = min((TILE_SIZE - CENTER_INSET) + y, height) - y
+            crop_x_start = max(x + CENTER_INSET, 0)
+            crop_y_start = max(y + CENTER_INSET, 0)
+            crop_x_end = min(x + TILE_SIZE - CENTER_INSET, width)
+            crop_y_end = min(y + TILE_SIZE - CENTER_INSET, height)
 
-        # print("x_end", TILE_SIZE - CENTER_INSET, " x_end_pos", x + TILE_SIZE - CENTER_INSET, " width", width, " back", tile_x_end)
-        # print("y_end", TILE_SIZE - CENTER_INSET, " y_end_pos", y + TILE_SIZE - CENTER_INSET, " height", height, " back", tile_y_end)
+            tile_x_start = CENTER_INSET
+            tile_x_end = min((TILE_SIZE - CENTER_INSET) + x, width) - x
+            tile_y_start = CENTER_INSET
+            tile_y_end = min((TILE_SIZE - CENTER_INSET) + y, height) - y
 
-        result[crop_y_start:crop_y_end, crop_x_start:crop_x_end, :] = tile.data[tile_y_start:tile_y_end, tile_x_start:tile_x_end]
+            print("x_end", TILE_SIZE - CENTER_INSET, " x_end_pos", x + TILE_SIZE - CENTER_INSET, " width", width, " back", tile_x_end)
+            print("y_end", TILE_SIZE - CENTER_INSET, " y_end_pos", y + TILE_SIZE - CENTER_INSET, " height", height, " back", tile_y_end)
+
+            result[crop_y_start:crop_y_end, crop_x_start:crop_x_end] = tile.data[tile_y_start:tile_y_end, tile_x_start:tile_x_end]
+
+        else:
+
+            crop_x_start = max(x + CENTER_INSET, 0)
+            crop_y_start = max(y + CENTER_INSET, 0)
+            crop_x_end = min(x + TILE_SIZE - CENTER_INSET, width)
+            crop_y_end = min(y + TILE_SIZE - CENTER_INSET, height)
+
+            tile_x_start = CENTER_INSET
+            tile_x_end = min((TILE_SIZE - CENTER_INSET) + x, width) - x
+            tile_y_start = CENTER_INSET
+            tile_y_end = min((TILE_SIZE - CENTER_INSET) + y, height) - y
+
+            if y < CENTER_SIZE:
+                crop_y_start = 0
+                tile_y_start = 0
+            elif (y + TILE_SIZE) > height:
+                crop_y_end = height
+                tile_y_end = min(y + TILE_SIZE, height) - y
+
+            if x < CENTER_SIZE:
+                crop_x_start = 0
+                tile_x_start = 0
+            elif (x + TILE_SIZE) > width:
+                crop_x_end = width
+                tile_x_end = min(x + TILE_SIZE, width) - x
+
+            print("x_end", TILE_SIZE - CENTER_INSET, " x_end_pos", x + TILE_SIZE - CENTER_INSET, " width", width, " back", tile_x_end)
+            print("y_end", TILE_SIZE - CENTER_INSET, " y_end_pos", y + TILE_SIZE - CENTER_INSET, " height", height, " back", tile_y_end)
+
+            result[crop_y_start:crop_y_end, crop_x_start:crop_x_end, :] = tile.data[tile_y_start:tile_y_end, tile_x_start:tile_x_end, :]
 
     return result
 
 
+"""
+These are the overlapping tiles functions, but they are not used in the current code.
+"""
 # def create_tiles(image: np.ndarray) -> List[Tile]:
 #     """Split image into overlapping tiles."""
 #     height, width = image.shape
@@ -392,7 +473,6 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
 
         for i, (tile1, tile2) in enumerate(batch):
             pred = batch_pred[i]
-            pred = np.vstack((pred, np.zeros((1, pred.shape[1], pred.shape[2]))))
             pred = np.transpose(pred, (1, 2, 0))
 
             displacement_tiles.append(Tile(data=pred, position=tile1.position))  # size=tile1.size, overlap=tile1.overlap
@@ -402,7 +482,7 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
     del model
 
     for tile in displacement_tiles:
-        tile_tile = tile.data[:, :, :2].astype(np.float64)
+        tile_tile = tile.data.astype(np.float64)
         os.makedirs(save_tile_path, exist_ok=True)
         np.save(save_tile_path + str(tile.position[0]) + "_" + str(tile.position[1]) + ".npy", tile_tile)
 
@@ -412,7 +492,7 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
     # stitched_image = (stitched_tiles - stitched_tiles.min()) / (stitched_tiles.max() - stitched_tiles.min() + 1e-12)
     # stitched_image = (stitched_tiles + 2) / (4)
     # stitched_image = np.clip(stitched_image * 255, 0, 255).astype(np.uint8)
-    stitched_image = flow_to_image(stitched_tiles[:, :, :2])
+    stitched_image = flow_to_image(stitched_tiles)
 
     os.makedirs(os.path.dirname(save_image_path), exist_ok=True)
 
@@ -420,7 +500,7 @@ def process_image(image_path: str, next_image_path: str, folder: str, model_name
     imageio.imwrite(save_image_path, stitched_image)
 
     # Remove the third channel
-    stitched_tiles = stitched_tiles[:, :, :2]
+    stitched_tiles = stitched_tiles
     # stitched_tiles.shape = (H, W, 2)
 
     np.save(save_motion_path, stitched_tiles.astype(np.float64))
