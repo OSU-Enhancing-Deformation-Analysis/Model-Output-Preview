@@ -101,3 +101,33 @@ python main.py --file_path "force_data.csv" --image_folder "images" --cache_fold
 .4,0,3.7852,-1.359,0,100,"0.1 mm/min"
 ...
 ```
+
+**How to Add a NEW Model to the Model Output Preview Tool:**
+
+To add a _newly trained model_ or a new _machine learning model architecture_ to be selectable in the Preview tool, you'll generally need to:
+
+1.  **Updating an Existing Model:** If the architrecture is already defined in the Preview tool, you'll need to update the `.pth` file to use the weights file. Just drop your new weights file in the `models/` folder and name it the same as the old one. The Preview tool will automatically detect the new model and use it.
+
+2.  **Adding a New Model Architecture:** If the Preview tool doesn't have a model for the new architecture, you'll need to add it to the Preview tool. The neural network architecture defined in your training file must be _identical_ to the architecture the Preview tool expects when it loads the `.pth` file. If you change the model architecture, the Preview tool's code also needs to be updated to define the same new architecture before it can load the weights.
+
+    1.  **Make the `.pth` File Accessible:** Place your new `YOUR_NEW_RUN_NAME.pth` file in the `models/` directory
+    2.  **Create the Archutecture File:** Create a new Python file in the `models/` directory with the same name as your `.pth` file, but with a `.py` extension. In this file, define the neural network architecture using the `nn.Module` class. For example, if your `.pth` file is named `m5-combo.pth`, your Python file should be named `m5-combo.py`. The contents of the Python file should look like this:
+
+        ```python
+        import torch
+        import torch.nn as nn
+        from models.m5_combo import ComboMotionVectorConvolutionNetwork
+
+        class MyNewModel(ComboMotionVectorConvolutionNetwork):
+            def __init__(self):
+                super().__init__()
+                # Add your model architecture here
+
+            def forward(self, x):
+                # Add your model forward pass here
+                return super().forward(x)
+        ```
+
+    3.  **Update the Preview Tool's Model List/Configuration:** The Preview tool has a list of available models that it can load. Inside the `machine_learning_model.py` file, you'll need to add an entry for your new model. On line #432 there is an if statement that checks the model name and loads the appropriate model architecture. Add a new entry to the if statement that checks for your new model name.
+    4.  **Update the Main File:** The `main.py` file has a list of available models that it can load. Right at the top of the file, you'll need to add an entry for your new model. It should match the name that your used in the if statement in `machine_learning_model.py`.
+    5.  **Test the New Model:** Run the `main.py` file to test your new model. If everything works, you're done! If not, you'll need to debug your code and make any necessary changes.
